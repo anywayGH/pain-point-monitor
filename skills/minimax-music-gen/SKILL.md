@@ -1,17 +1,15 @@
 ---
 name: minimax-music-gen
 description: >
-  Use when user wants to generate music, songs, or audio tracks. Triggers on phrases like
-  "generate a song", "make music", "create a track", "写首歌", "生成音乐", "来一首歌",
-  "帮我做首歌", "纯音乐", "cover", "唱一首", or any request involving music creation,
-  song writing, lyrics generation, or audio production. Also triggers when user provides
-  lyrics and wants them turned into a song, or describes a mood/scene and wants background
-  music. Even casual requests like "给我来点音乐" or "I want a chill beat" should trigger
-  this skill. Do NOT use for music playback of existing files, music theory questions, or
-  music recommendation without generation.
+  Use when user wants to generate music, songs, or audio tracks. Triggers on any request
+  involving music creation, song writing, lyrics generation, audio production, or covers.
+  Also triggers when user provides lyrics and wants them turned into a song, or describes
+  a mood/scene and wants background music. Supports multilingual triggers — match equivalent
+  phrases in any language. Do NOT use for music playback of existing files, music theory
+  questions, or music recommendation without generation.
 license: MIT
 metadata:
-  version: "1.0"
+  version: "1.1"
   category: creative
 ---
 
@@ -27,7 +25,7 @@ prompt, plan before generating).
 
   **Check if installed:**
   ```bash
-  command -v mmx && mmx --version || echo "❌ mmx not found"
+  command -v mmx && mmx --version || echo "mmx not found"
   ```
 
   **Install (requires Node.js):**
@@ -47,8 +45,8 @@ prompt, plan before generating).
   mmx quota show
   ```
 
-- Python 3.8+ (playback scripts use only stdlib).
-- `ffplay` or `mpv` or `afplay` (macOS) for local playback. The script auto-detects.
+- **Audio player** (recommended): `mpv`, `ffplay`, or `afplay` (macOS built-in) for local
+  playback. `mpv` is preferred for its interactive controls.
 
 ## CLI Tool
 
@@ -64,12 +62,12 @@ This skill uses the `mmx` CLI for all music generation:
   - Takes reference audio via `--audio-file <path>` or `--audio <url>`
   - `--prompt` describes the target cover style
 
-**Agent flags**: Always add `--quiet --non-interactive` when calling mmx from scripts/agents.
+**Agent flags**: Always add `--quiet --non-interactive` when calling mmx from agents.
 
 **Pipeline**:
-- Vocal: `User description → mmx music generate --lyrics-optimizer → MP3`
-- Instrumental: `User description → mmx music generate --instrumental → MP3`
-- Cover: `Source audio + style → mmx music cover → MP3`
+- Vocal: `User description -> mmx music generate --lyrics-optimizer -> MP3`
+- Instrumental: `User description -> mmx music generate --instrumental -> MP3`
+- Cover: `Source audio + style -> mmx music cover -> MP3`
 
 ## Storage
 
@@ -79,69 +77,72 @@ exist. Files are named with a timestamp and a short slug derived from the prompt
 
 ---
 
+## Language & Interaction
+
+Detect the user's language from their first message and respond in that language for the
+entire session. This applies to all interaction text, questions, confirmations, and feedback
+prompts.
+
+**User-facing text localization rule**:
+- ALL text shown to the user — including preview labels, field names, confirmations, status
+  messages, playback info, feedback prompts, **and the prompt/description preview** — MUST
+  be fully translated into the user's language.
+- The **API prompt** sent to the model should always be written in English for best
+  generation quality. However, when previewing the prompt to the user, show a localized
+  description in the user's language instead of the raw English prompt. The English prompt
+  is an internal implementation detail — the user does not need to see it.
+- The templates below are written in English as reference. At runtime, translate every label
+  and message into the user's detected language.
+
+**Lyrics language rule**:
+- Default lyrics language = the user's language. A Chinese-speaking user gets Chinese lyrics;
+  an English-speaking user gets English lyrics.
+- Only generate lyrics in a different language if the user **explicitly** requests it.
+- When a different lyrics language is needed, embed it naturally into the vocal or genre
+  description in the prompt. For example, instead of appending "with Korean lyrics", use
+  "featuring a Korean female vocalist" or specify a genre that implies the language (e.g.,
+  "K-pop", "J-rock", "Mandopop", "Latin pop").
+
+---
+
 ## Workflow
 
-## Language Detection
+### Step 0: Detect Intent
 
-Detect the user's language from their message at the start of the session:
-- Chinese (中文) → Set `LANG=zh` — all interactions in Chinese, generate Chinese lyrics
-- English → Set `LANG=en` — all interactions in English, generate English lyrics
+Parse the user's message to determine:
 
-**IMPORTANT — Lyrics language rule**:
-- Default lyrics language = user's language. 用户说中文 → 生成中文歌词。User speaks English → English lyrics.
-- Only generate a different language if the user **explicitly** asks (e.g., "给我写首英文歌", "write Chinese lyrics").
-
-Pass `--lang $LANG` to playback script invocations throughout the workflow.
-Respond to the user in their detected language. Use the matching template below.
-
-### Step 0: Detect Language & Intent
-
-Detect the user's language and respond in the same language throughout. Parse their message
-to determine:
-
-1. **Song category**: vocal (人声音乐), instrumental (纯音乐), or cover
-2. **Creation mode preference**: did they provide detailed requirements (→ Advanced) or a
-   casual one-liner (→ Basic)?
+1. **Song category**: vocal (with lyrics), instrumental (no vocals), or cover
+2. **Creation mode preference**: did they provide detailed requirements (Advanced) or a
+   casual one-liner (Basic)?
 
 If ambiguous, ask using this decision tree:
 
-**If LANG=zh:**
-```
-Q1: 你想要哪种类型？
-  - 🎤 人声音乐（有歌词演唱）
-  - 🎵 纯音乐（无人声）
-  - 🎧 Cover（翻唱风格）
-
-Q2: 创作模式？
-  - ⚡ 基础版 — 一句话描述，自动搞定
-  - 🎛️ 强控制版 — 自己调歌词、prompt、风格
-```
-
-**If LANG=en:**
 ```
 Q1: What type of music?
-  - 🎤 Vocal (with lyrics)
-  - 🎵 Instrumental (no vocals)
-  - 🎧 Cover
+  - Vocal (with lyrics)
+  - Instrumental (no vocals)
+  - Cover
 
 Q2: Creation mode?
-  - ⚡ Basic — one-line description, auto-generate
-  - 🎛️ Advanced — edit lyrics, refine prompt, plan
+  - Basic — one-line description, auto-generate
+  - Advanced — edit lyrics, refine prompt, plan
 ```
 
-If the user gives a clear one-liner like "帮我生成一首悲伤的钢琴曲", skip the questions —
+If the user gives a clear one-liner like "make me a sad piano piece", skip the questions —
 infer instrumental + basic mode and proceed.
 
 ---
 
 ### Step 1: Basic Mode
 
-**Goal**: User provides a short description → skill auto-generates everything → call API.
+**Goal**: User provides a short description, the skill auto-generates everything, then calls
+the API.
 
 1. **Expand the description into a prompt**: Take the user's one-liner and expand it into a
-   rich music prompt. Read `references/prompt_guide.md` for the style vocabulary and
-   prompt structure. **The API prompt should always be written in English** for best
-   generation quality, regardless of the user's language.
+   rich music prompt. Refer to the **Prompt Writing Guide** appendix at the end of this
+   document for style vocabulary, genre/instrument references, and prompt structure.
+   **The API prompt should always be written in English** for best generation quality,
+   regardless of the user's language.
    
    Follow this pattern:
    ```
@@ -149,24 +150,15 @@ infer instrumental + basic mode and proceed.
    about [narrative/theme], [atmosphere], [key instruments and production].
    ```
 
-2. **Show the user a preview** before generating:
+2. **Show the user a preview** before generating. Translate all labels AND the prompt
+   description into the user's language. The English prompt is only used internally when
+   calling the API — the user should never see it. Example template (English reference —
+   localize everything at runtime):
 
-   **If LANG=zh** — translate the prompt into Chinese for display, note the API uses English:
    ```
-   🎵 即将为你生成：
-   类型：人声音乐 / 纯音乐
-   Prompt：一首忧郁内省的独立民谣，温柔女声，原声吉他，深夜独处的氛围
-   （API 将使用英文 prompt 以获得最佳效果）
-   歌词：自动生成
-   
-   确认生成？(直接回车确认，或告诉我要改什么)
-   ```
-
-   **If LANG=en:**
-   ```
-   🎵 About to generate:
+   About to generate:
    Type: Vocal / Instrumental
-   Prompt: indie folk, melancholy, acoustic guitar, gentle female voice
+   Description: indie folk, melancholy, acoustic guitar, gentle female voice
    Lyrics: Auto-generated (--lyrics-optimizer)
    
    Confirm? (press enter to confirm, or tell me what to change)
@@ -184,18 +176,18 @@ infer instrumental + basic mode and proceed.
    - If user provided lyrics: display them formatted with section markers, ask for edits.
      The final lyrics will be passed via `--lyrics` to mmx.
    - If user has a theme but no lyrics: will use `--lyrics-optimizer` to auto-generate.
-   - Support iterative editing: "第二段副歌改一下" → only rewrite that section.
+   - Support iterative editing: "change the second chorus" -> only rewrite that section.
    - User can also write lyrics themselves and pass via `--lyrics`.
 
 2. **Prompt phase**:
    - Generate a recommended prompt based on the lyrics' mood and content.
    - Present it as editable tags the user can add/remove/modify.
-   - Read `references/prompt_guide.md` for the full vocabulary.
+   - Refer to the **Prompt Writing Guide** appendix for the full vocabulary.
 
 3. **Advanced planning** (optional, offer but don't force):
    - Song structure: verse-chorus-verse-chorus-bridge-chorus or custom
    - BPM suggestion (encode in prompt as tempo descriptor)
-   - Reference style: "类似某种风格" → map to prompt tags
+   - Reference style: "something like X style" -> map to prompt tags
    - Vocal character description
 
 4. **Final confirmation**: Show complete parameter summary, then generate.
@@ -247,38 +239,38 @@ Display a progress indicator while waiting. Typical generation takes 30-120 seco
 
 ### Step 4: Playback
 
-After generation, play the song (prefer CLI players):
+After generation, detect an available audio player and play the file.
 
+**Detect player:**
 ```bash
-# macOS
-afplay ~/Music/minimax-gen/<filename>.mp3
-
-# Or with mpv/ffplay
-mpv ~/Music/minimax-gen/<filename>.mp3
-ffplay ~/Music/minimax-gen/<filename>.mp3
+command -v mpv || command -v ffplay || command -v afplay
 ```
 
-**Fallback (auto-detect player):**
-```bash
-python3 ~/.claude/skills/minimax-music-gen/scripts/play_music.py \
-  --lang $LANG \
-  ~/Music/minimax-gen/<filename>.mp3
+**Play based on detected player (in priority order):**
+
+| Player | Command | Controls |
+|--------|---------|----------|
+| `mpv` (preferred) | `mpv --no-video ~/Music/minimax-gen/<filename>.mp3` | space = pause/resume, q = quit, left/right = seek |
+| `ffplay` | `ffplay -nodisp -autoexit ~/Music/minimax-gen/<filename>.mp3` | q = quit |
+| `afplay` (macOS) | `afplay ~/Music/minimax-gen/<filename>.mp3` | Ctrl+C = stop |
+| None found | Do not attempt playback | Show file path only |
+
+After starting playback, tell the user (localize all text):
+
+```
+Now playing: <filename>.mp3
+Saved to: ~/Music/minimax-gen/<filename>.mp3
 ```
 
-Tell the user:
+Do NOT show playback controls (e.g. keyboard shortcuts) — they don't work in this
+environment since the player runs in the background.
 
-**If LANG=zh:**
-```
-🎵 正在播放：<filename>.mp3
-📁 文件已保存到：~/Music/minimax-gen/<filename>.mp3
-⏸️  按 q 或 Ctrl+C 可暂停/停止播放
-```
+If no player is found (localize all text):
 
-**If LANG=en:**
 ```
-🎵 Now playing: <filename>.mp3
-📁 Saved to: ~/Music/minimax-gen/<filename>.mp3
-⏸️  Press q or Ctrl+C to pause/stop playback
+No audio player detected.
+File saved to: ~/Music/minimax-gen/<filename>.mp3
+Tip: Install mpv for the best playback experience (brew install mpv).
 ```
 
 ---
@@ -287,22 +279,12 @@ Tell the user:
 
 After playback, ask for feedback:
 
-**If LANG=zh:**
-```
-这首歌怎么样？
-  1. 🎉 很满意，保留！
-  2. 🔄 不太行，调整后重新生成
-  3. 🎨 歌词/风格微调后重新生成
-  4. 🗑️ 不要了，删掉重来
-```
-
-**If LANG=en:**
 ```
 How was this song?
-  1. 🎉 Love it, keep it!
-  2. 🔄 Not quite, adjust and regenerate
-  3. 🎨 Fine-tune lyrics/style then regenerate
-  4. 🗑️ Don't want it, start over
+  1. Love it, keep it!
+  2. Not quite, adjust and regenerate
+  3. Fine-tune lyrics/style then regenerate
+  4. Don't want it, start over
 ```
 
 Based on feedback:
@@ -311,21 +293,6 @@ Based on feedback:
   re-run generation. Keep the old file with a `_v1` suffix for comparison.
 - **Fine-tune**: Enter Advanced Control Mode with the current parameters pre-filled.
 - **Delete & restart**: Remove the file, go back to Step 0.
-
----
-
-## Error Handling
-
-| Error | Action |
-|-------|--------|
-| mmx not found | `npm install -g mmx-cli` |
-| mmx auth error (exit code 3) | `mmx auth login` |
-| Quota exceeded (exit code 4) | Report quota limit, suggest waiting or upgrading |
-| API timeout (exit code 5) | Retry once, then report failure |
-| Content filter (exit code 10) | Adjust prompt to avoid filtered content |
-| Invalid lyrics format | Auto-fix section markers, warn user |
-| No audio player found | Save file and tell user the path, suggest installing mpv |
-| Network error | Show error detail, suggest checking connection |
 
 ---
 
@@ -387,7 +354,7 @@ mmx music cover \
 
 | Flag | Description |
 |------|-------------|
-| `--seed <number>` | Random seed 0–1000000 for reproducible results |
+| `--seed <number>` | Random seed 0-1000000 for reproducible results |
 | `--channel <n>` | `1` (mono) or `2` (stereo, default) |
 | `--format <fmt>` | `mp3` (default), `wav`, `pcm` |
 | `--sample-rate <hz>` | Sample rate (default: 44100) |
@@ -398,14 +365,40 @@ Proceed with normal playback and feedback flow (Step 4 & 5).
 
 ---
 
+## Error Handling
+
+| Error | Action |
+|-------|--------|
+| mmx not found | `npm install -g mmx-cli` |
+| mmx auth error (exit code 3) | `mmx auth login` |
+| Quota exceeded (exit code 4) | Report quota limit, suggest waiting or upgrading |
+| API timeout (exit code 5) | Retry once, then report failure |
+| Content filter (exit code 10) | Adjust prompt to avoid filtered content |
+| Invalid lyrics format | Auto-fix section markers, warn user |
+| No audio player found | Save file and tell user the path, suggest installing mpv |
+| Network error | Show error detail, suggest checking connection |
+
+---
+
 ## Important Notes
 
 - **Never reproduce copyrighted lyrics.** When doing covers, always write original lyrics
   inspired by the song's theme. Explain this to the user.
-- **Prompt language**: The API prompt works best with Chinese tags or English tags. Mix is OK.
+- **Prompt language**: The API prompt works best with English tags. Chinese tags are also
+  acceptable. Mixing is OK.
 - **Section markers in lyrics**: The API recognizes `[verse]`, `[chorus]`, `[bridge]`,
   `[outro]`, `[intro]`. Always include them when providing `--lyrics`.
 - **File management**: If `~/Music/minimax-gen/` has more than 50 files, suggest cleanup
   when starting a new session.
 - **Structured params**: Prefer using `--genre`, `--mood`, `--vocals`, `--instruments`,
   `--bpm` etc. over embedding everything in `--prompt`. This gives the API better control.
+- **Lyrics language via style**: When the user wants lyrics in a specific language, express
+  it through the vocal description or genre (e.g., "Japanese female vocalist", "Mandopop
+  ballad") rather than appending a language directive to the prompt.
+
+---
+
+## Appendix: Prompt Writing Guide
+
+See [references/prompt_guide.md](references/prompt_guide.md) for the complete prompt writing guide,
+including genre/vocal/instrument references and BPM tables.
